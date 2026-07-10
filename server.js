@@ -4,12 +4,9 @@ const path = require('path');
 
 const app = express();
 app.use(express.json({ limit: '50mb' }));
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(__dirname));
 
-app.get('/FSA.html', (req, res) => res.redirect('/'));
-
-const DATA_FILE = path.join(__dirname, 'data', 'database.json');
-const DATA_DIR = path.join(__dirname, 'data');
+const DATA_FILE = path.join(__dirname, 'database.json');
 
 const DEFAULT_DATA = {
   orders: [
@@ -25,9 +22,6 @@ const DEFAULT_DATA = {
 };
 
 function initDataFile() {
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-  }
   if (!fs.existsSync(DATA_FILE)) {
     fs.writeFileSync(DATA_FILE, JSON.stringify(DEFAULT_DATA, null, 2), 'utf8');
     console.log('Created default database.json');
