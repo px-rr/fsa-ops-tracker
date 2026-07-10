@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>O5 Internal Ops Tracker</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap');
+body { font-family: 'Roboto', sans-serif; background-color: #f3f4f6; overflow-x: hidden; }
+.bg-brand-red { background-color: #eb4153; }
+.carousel-stage { perspective: 1800px; }
+.carousel-ring { transform-style: preserve-3d; transition: transform 0.7s cubic-bezier(0.65,0,0.35,1); }
+.carousel-panel {
+  position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+  backface-visibility: hidden; background: #ffffff; border-radius: 12px;
+  overflow-y: auto; box-shadow: 0 4px 20px rgba(0,0,0,0.08); border: 1px solid #e5e7eb;
+}
+.table-container::-webkit-scrollbar { height: 8px; width: 8px; }
+.table-container::-webkit-scrollbar-track { background: #f1f5f9; border-radius: 4px; }
+.table-container::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+.locked-btn { opacity: 0.5; cursor: not-allowed; }
+.nav-dot { transition: all 0.3s; }
+.empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 5rem 2rem; color: #94a3b8; }
+/* Content Editable hover styles */
+[contenteditable="true"]:hover { background-color: rgba(0,0,0,0.05); border-radius: 4px; cursor: text; outline: 1px dashed #cbd5e1; }
+[contenteditable="true"]:focus { outline: 2px solid #3b82f6; background-color: white; border-radius: 4px; }
+dialog::backdrop { background: rgba(0, 0, 0, 0.4); backdrop-filter: blur(2px); }
+</style>
+</head>
+<body class="text-slate-800 h-screen flex flex-col">
+
+<!-- Updated Header matching the image -->
+<header class="bg-brand-red border-b border-red-600 px-6 py-4 flex justify-between items-center shrink-0 z-20 shadow-sm">
+  <div class="flex items-center gap-4 w-1/4">
+    <!-- Room for using logo -->
+    <img id="logo-img" src="https://placehold.co/180x50/eb4153/ffffff?text=O5+Apparel&font=roboto" alt="Logo" class="h-8 object-contain">
+  </div>
+  
+  <div class="flex-1 flex justify-center">
+      <h1 class="text-2xl font-medium text-white tracking-wide" contenteditable="true" spellcheck="false">Internal Ops Dashboard</h1>
+  </div>
+  
+  <div class="w-1/4 flex justify-end items-center gap-4">
+      <div class="h-8 w-8 rounded-full bg-white/20 text-white flex items-center justify-center font-bold shadow-sm hover:bg-white/30 cursor-pointer transition">EN <i class="fa-solid fa-caret-down ml-1 text-xs"></i></div>
+  </div>
+</header>
+
+<div class="flex justify-center items-center gap-3 py-3 bg-white shrink-0 z-20 border-b border-slate-200 shadow-sm">
+  <button onclick="prevPanel()" class="h-8 w-8 rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200 hover:text-slate-800 flex items-center justify-center transition-colors">
+    <i class="fa-solid fa-chevron-left"></i>
+  </button>
+  <div class="flex gap-2" id="nav-dots"></div>
+  <button onclick="nextPanel()" class="h-8 w-8 rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200 hover:text-slate-800 flex items-center justify-center transition-colors">
+    <i class="fa-solid fa-chevron-right"></i>
+  </button>
+</div>
+
+<main class="flex-1 flex items-center justify-center bg-slate-50 p-6">
+  <div class="carousel-stage w-full max-w-[1500px] h-full">
+    <div class="carousel-ring relative w-full h-full" id="carousel-ring"></div>
+  </div>
+</main>
+
+<!-- Global Edit Modal -->
+<dialog id="editModal" class="rounded-xl shadow-2xl border border-slate-200 p-0 w-full max-w-lg bg-white">
+  <div class="p-6">
+    <h3 id="modalTitle" class="text-xl font-bold mb-4 text-slate-800">Edit</h3>
+    <div id="modalBody" class="space-y-4 max-h-[60vh] overflow-y-auto px-1">
+      <!-- Dynamically injected fields -->
+    </div>
+    <div class="mt-6 flex justify-end gap-3 border-t border-slate-100 pt-4">
+      <button onclick="document.getElementById('editModal').close()" class="px-4 py-2 bg-slate-100 rounded-lg text-slate-700 font-medium hover:bg-slate-200 transition-colors">Cancel</button>
+      <button onclick="saveModal()" class="px-4 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors">Save Changes</button>
+    </div>
+  </div>
+</dialog>
+
+<script>
+// Data arrays - loaded from server
+let orders = [];
+let heroes = [];
+let comms = [];
+
+const API_BASE = window.location.origin;
+
+async function loadData() {
+  try {
+    const res = await fetch(`${API_BASE}/api/data`);
+    if (res.ok) {
+      const data = await res.json();
+      orders = data.orders || [];
+      heroes = data.heroes || [];
+      comms = data.comms || [];
+    }
+  } catch (e) {
+    console.warn('API unavailable, using empty data', e);
+  }
+  buildRing();
+}
+
+async function saveData() {
+  try {
+    await fetch(`${API_BASE}/api/data`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ orders, heroes, comms })
+    });
+  } catch (e) {
+    console.warn('Failed to save data', e);
+  }
+}
+
+// Contenteditable persistence (UI text preferences)
+function saveEditable(el) {
+  const key = 'ce-' + (el.id || el.className || Math.random().toString(36).slice(2));
+  localStorage.setItem(key, el.innerText);
+}
+
+function loadEditables() {
+  document.querySelectorAll('[contenteditable="true"]').forEach(el => {
+    const key = 'ce-' + (el.id || el.className || '');
+    const saved = localStorage.getItem(key);
+    if (saved) el.innerText = saved;
+    el.addEventListener('blur', () => saveEditable(el));
+  });
+}
+
+const panels = ['tracker','heroes','validator','dashboard','comms'];
+const panelLabels = { tracker: 'Master tracker', heroes: 'Hero registry', validator: 'Naming validator', dashboard: 'Dashboard', comms: 'Comm log' };
+let currentIndex = 0;
+const radius = 950;
+
+function buildRing() {
+  const ring = document.getElementById('carousel-ring');
+  ring.innerHTML = panels.map((p, i) => {
+    const angle = (360 / panels.length) * i;
+    return `<div class="carousel-panel" id="panel-${p}" style="transform: rotateY(${angle}deg) translateZ(${radius}px);"></div>`;
+  }).join('');
+  panels.forEach(renderPanel);
+  buildDots();
+  updateCarousel();
+}
+
+function buildDots() {
+  const dots = document.getElementById('nav-dots');
+  dots.innerHTML = panels.map((p, i) => `
+    <button onclick="goToPanel(${i})" class="nav-dot h-2.5 rounded-full ${i === currentIndex ? 'w-8 bg-brand-red' : 'w-2.5 bg-slate-300'}" title="${panelLabels[p]}"></button>
+  `).join('');
+}
+
+function updateCarousel() {
+  const ring = document.getElementById('carousel-ring');
+  const angle = -(360 / panels.length) * currentIndex;
+  ring.style.transform = `translateZ(-${radius}px) rotateY(${angle}deg)`;
+  buildDots();
+}
+
+function nextPanel() { currentIndex = (currentIndex + 1) % panels.length; updateCarousel(); }
+function prevPanel() { currentIndex = (currentIndex - 1 + panels.length) % panels.length; updateCarousel(); }
+function goToPanel(i) { currentIndex = i; updateCarousel(); }
+
+function renderPanel(tab) {
+  const container = document.getElementById(`panel-${tab}`);
+  if(!container) return;
+  switch(tab) {
+    case 'tracker': renderTracker(container); break;
+    case 'heroes': renderHeroes(container); break;
+    case 'validator': renderValidator(container); break;
+    case 'dashboard': renderDashboard(container); break;
+    case 'comms': renderComms(container); break;
+  }
+}
+
+function canApprove(order) {
+  // Can approve if flag array only contains 'None' (or is empty) and a reviewer is assigned
+  const hasNoFlags = !order.flag || order.flag.length === 0 || (order.flag.length === 1 && order.flag.includes('None'));
+  return hasNoFlags && order.qcReviewer && order.qcReviewer.trim() !== '';
+}
+
+// ----------------------------------------------------
+// FILE UPLOAD HANDLER
+// ----------------------------------------------------
+window.handleFileUpload = function(input) {
+  const file = input.files[0];
+  if (file) {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      document.getElementById(input.id + '-hidden').value = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  }
+};
+
+// ----------------------------------------------------
+// EDIT / DELETE MODAL LOGIC
+// ----------------------------------------------------
+const schemas = {
+  order: [
+    { key: 'id', label: 'Order ID' },
+    { key: 'client', label: 'Client' },
+    { key: 'status', label: 'Status', type: 'select', options: ['Pending', 'In Progress', 'QC Review', 'Revision Needed', 'Approved', 'Delivered', 'Marilena Review'] },
+    { key: 'retoucher', label: 'Retoucher' },
+    { key: 'qc', label: 'QC Person' },
+    { key: 'flag', label: 'QC Flag (Multi-select)', type: 'multiselect', options: ['None', 'Under Retouched', 'Over Retouched', 'Hero Mismatch', 'Wrong Crop', 'Naming Error', 'Other'] },
+    { key: 'notes', label: 'QC Notes', type: 'textarea' },
+    { key: 'revs', label: 'Revision Count', type: 'number' },
+    { key: 'eta', label: 'ETA Date', type: 'date' },
+    { key: 'actualDelivery', label: 'Actual Delivery', type: 'date' },
+    { key: 'owner', label: 'Owner' },
+    { key: 'qcReviewer', label: 'Final QC Reviewer' }
+  ],
+  hero: [
+    { key: 'style', label: 'Style/Hero Name' },
+    { key: 'img', label: 'Upload Hero Image', type: 'file' },
+    { key: 'date', label: 'Locked Date', type: 'date' },
+    { key: 'notes', label: 'QC Standard Notes', type: 'textarea' },
+    { key: 'approvedBy', label: 'Approved By' }
+  ],
+  comm: [
+    { key: 'date', label: 'Date', type: 'date' },
+    { key: 'contact', label: 'Contact Person' },
+    { key: 'topic', label: 'Topic' },
+    { key: 'resolution', label: 'Resolution', type: 'textarea' },
+    { key: 'followUp', label: 'Follow Up Needed (Y/N)', type: 'select', options: ['Y', 'N'] }
+  ]
+};
+
+const dataMap = { order: orders, hero: heroes, comm: comms };
+let currentEdit = { type: null, index: null };
+
+function openModal(type, index = -1) {
+  currentEdit = { type, index };
+  const schema = schemas[type];
+  const arr = dataMap[type];
+  const item = index >= 0 ? arr[index] : {};
+  
+  let html = '';
+  schema.forEach(field => {
+    const val = item[field.key] !== undefined ? item[field.key] : (field.type === 'number' ? '0' : (field.type === 'multiselect' ? [] : ''));
+    
+    html += `<div class="mb-3"><label class="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-1">${field.label}</label>`;
+    
+    if (field.type === 'select') {
+      html += `<select id="field-${field.key}" class="w-full border border-slate-300 rounded p-2 text-sm focus:ring-2 focus:ring-brand-red outline-none bg-white">
+                 ${field.options.map(o => `<option value="${o}" ${val === o ? 'selected' : ''}>${o}</option>`).join('')}
+               </select>`;
+    } else if (field.type === 'multiselect') {
+      const currentVals = Array.isArray(val) ? val : [val];
+      html += `<div class="w-full border border-slate-300 rounded bg-white p-2 text-sm max-h-32 overflow-y-auto flex flex-col gap-1">`;
+      field.options.forEach(o => {
+          const checked = currentVals.includes(o) ? 'checked' : '';
+          html += `<label class="flex items-center gap-2 cursor-pointer hover:bg-slate-50 p-1 rounded"><input type="checkbox" value="${o}" class="multiselect-checkbox-${field.key}" ${checked}> ${o}</label>`;
+      });
+      html += `</div>`;
+    } else if (field.type === 'textarea') {
+      html += `<textarea id="field-${field.key}" rows="3" class="w-full border border-slate-300 rounded p-2 text-sm focus:ring-2 focus:ring-brand-red outline-none bg-white">${val}</textarea>`;
+    } else if (field.type === 'file') {
+      html += `<input type="file" id="field-${field.key}" accept="image/*" onchange="handleFileUpload(this)" class="w-full border border-slate-300 rounded p-1.5 text-sm focus:ring-2 focus:ring-brand-red outline-none bg-white">`;
+      html += `<input type="hidden" id="field-${field.key}-hidden" value="${val}">`;
+      if(val) html += `<p class="text-xs text-green-600 mt-1"><i class="fa-solid fa-check mr-1"></i>Image currently saved. Upload a new file to replace.</p>`;
+    } else {
+      html += `<input type="${field.type || 'text'}" id="field-${field.key}" value="${val}" class="w-full border border-slate-300 rounded p-2 text-sm focus:ring-2 focus:ring-brand-red outline-none bg-white">`;
+    }
+    html += `</div>`;
+  });
+  
+  document.getElementById('modalBody').innerHTML = html;
+  document.getElementById('modalTitle').innerText = index >= 0 ? `Edit Entry` : `Create New Entry`;
+  document.getElementById('editModal').showModal();
+}
+
+function saveModal() {
+  const { type, index } = currentEdit;
+  const schema = schemas[type];
+  const newItem = {};
+  
+  schema.forEach(field => {
+    if (field.type === 'file') {
+      newItem[field.key] = document.getElementById(`field-${field.key}-hidden`).value;
+    } else if (field.type === 'multiselect') {
+      const checkboxes = document.querySelectorAll(`.multiselect-checkbox-${field.key}:checked`);
+      newItem[field.key] = Array.from(checkboxes).map(cb => cb.value);
+    } else {
+      newItem[field.key] = document.getElementById(`field-${field.key}`).value;
+    }
+  });
+  
+  const arr = dataMap[type];
+  if (index >= 0) {
+    Object.assign(arr[index], newItem);
+  } else {
+    arr.push(newItem);
+  }
+  
+  document.getElementById('editModal').close();
+  buildRing();
+  saveData();
+}
+
+function deleteItem(type, index) {
+  if(confirm('Are you sure you want to permanently delete this item?')) {
+    dataMap[type].splice(index, 1);
+    buildRing();
+    saveData();
+  }
+}
+
+// ----------------------------------------------------
+// RENDERERS
+// ----------------------------------------------------
+
+function renderTracker(container) {
+  const rows = orders.length ? orders.map((order, i) => {
+    const gateOk = canApprove(order);
+    return `
+    <tr class="border-b border-slate-100 hover:bg-slate-50 transition-colors">
+      <td class="p-3 font-medium text-slate-800">${order.id}</td>
+      <td class="p-3 text-slate-600">${order.client}</td>
+      <td class="p-3">${getStatusBadge(order.status)}</td>
+      <td class="p-3 text-sm text-slate-600">${order.retoucher} / ${order.qc}</td>
+      <td class="p-3 flex flex-wrap gap-1">${getFlagBadge(order.flag)}</td>
+      <td class="p-3 text-xs text-slate-500 max-w-[140px] truncate" title="${order.notes}">${order.notes || '-'}</td>
+      <td class="p-3 text-center text-sm font-medium ${order.revs > 0 ? 'text-orange-600' : 'text-slate-400'}">${order.revs}</td>
+      <td class="p-3 text-sm whitespace-nowrap ${isOverdue(order.eta, order.actualDelivery, order.status) ? 'text-red-600 font-bold' : 'text-slate-600'}">${order.eta || '-'}</td>
+      <td class="p-3 text-sm font-medium whitespace-nowrap text-emerald-700">${order.actualDelivery || '-'}</td>
+      <td class="p-3 text-xs text-slate-500 whitespace-nowrap">${order.owner || '-'}</td>
+      <td class="p-3">
+        <button ${gateOk ? '' : 'title="Needs QC reviewer and clear flag" class="locked-btn"'} class="px-2 py-1 text-xs font-medium rounded border mb-1 ${gateOk ? 'border-green-300 text-green-700 hover:bg-green-50' : 'border-slate-200 text-slate-400 locked-btn'}">
+          <i class="fa-solid fa-lock${gateOk ? '-open' : ''} mr-1"></i>Approve
+        </button>
+      </td>
+      <td class="p-3 whitespace-nowrap">
+        <button onclick="openModal('order', ${i})" class="text-slate-400 hover:text-blue-600 p-1 transition-colors"><i class="fa-solid fa-pen"></i></button>
+        <button onclick="deleteItem('order', ${i})" class="text-slate-400 hover:text-red-600 p-1 transition-colors"><i class="fa-solid fa-trash"></i></button>
+      </td>
+    </tr>`;
+  }).join('') : '';
+
+  container.innerHTML = `
+    <div class="p-6">
+      <div class="flex justify-between items-center mb-6">
+        <div>
+          <h2 class="text-2xl font-bold text-slate-800" contenteditable="true" spellcheck="false">Master tracker</h2>
+          <p class="text-sm text-slate-500 mt-1" contenteditable="true" spellcheck="false">Approve is locked until QC flag is clear and a reviewer is assigned.</p>
+        </div>
+        <button onclick="openModal('order')" class="bg-slate-800 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-slate-700 shadow-sm transition-colors"><i class="fa-solid fa-plus mr-2"></i>New order</button>
+      </div>
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+        <div class="overflow-x-auto table-container">
+          <table class="w-full text-left border-collapse">
+            <thead>
+              <tr class="bg-slate-50 border-b border-slate-200 text-xs uppercase text-slate-500 font-semibold tracking-wider">
+                <th class="p-4" contenteditable="true">Order ID</th>
+                <th class="p-4" contenteditable="true">Client</th>
+                <th class="p-4" contenteditable="true">Status</th>
+                <th class="p-4" contenteditable="true">Staff (Ret/QC)</th>
+                <th class="p-4" contenteditable="true">QC flag</th>
+                <th class="p-4" contenteditable="true">QC notes</th>
+                <th class="p-4 text-center" contenteditable="true">Revs</th>
+                <th class="p-4" contenteditable="true">ETA</th>
+                <th class="p-4" contenteditable="true">Actual Delivery</th>
+                <th class="p-4" contenteditable="true">Owner</th>
+                <th class="p-4" contenteditable="true">Gate</th>
+                <th class="p-4">Actions</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+        ${orders.length === 0 ? `<div class="empty-state"><i class="fa-regular fa-folder-open text-4xl mb-3"></i><p class="font-medium" contenteditable="true">No orders yet</p><p class="text-sm" contenteditable="true">Click "New order" to start tracking.</p></div>` : ''}
+      </div>
+    </div>
+  `;
+}
+
+function renderHeroes(container) {
+  const cards = heroes.map((hero, i) => `
+    <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden hover:shadow-md transition-shadow relative group">
+      <div class="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+          <button onclick="openModal('hero', ${i})" class="bg-white/90 shadow p-1.5 rounded text-blue-600 hover:bg-blue-50 transition-colors" title="Edit"><i class="fa-solid fa-pen text-xs"></i></button>
+          <button onclick="deleteItem('hero', ${i})" class="bg-white/90 shadow p-1.5 rounded text-red-600 hover:bg-red-50 transition-colors" title="Delete"><i class="fa-solid fa-trash text-xs"></i></button>
+      </div>
+      <img src="${hero.img}" alt="${hero.style}" class="w-full h-40 object-contain bg-slate-100 border-b border-slate-200">
+      <div class="p-4">
+        <h3 class="font-bold text-slate-800 mb-1">${hero.style}</h3>
+        <p class="text-xs text-slate-500 mb-3"><i class="fa-regular fa-calendar mr-1"></i> Locked: ${hero.date}</p>
+        <div class="bg-slate-50 rounded-lg p-3 text-sm text-slate-700 mb-3 border border-slate-100"><strong>QC standard:</strong><br>${hero.notes}</div>
+        <div class="text-xs font-medium text-slate-500 flex items-center"><i class="fa-solid fa-check-circle text-green-500 mr-1.5"></i> Approved by ${hero.approvedBy}</div>
+      </div>
+    </div>
+  `).join('');
+
+  container.innerHTML = `
+    <div class="p-6">
+      <div class="flex justify-between items-center mb-6">
+        <div>
+          <h2 class="text-2xl font-bold text-slate-800" contenteditable="true" spellcheck="false">Hero reference registry</h2>
+          <p class="text-sm text-slate-500 mt-1" contenteditable="true" spellcheck="false">Single source of truth for QC visual comparisons. Edit or delete cards.</p>
+        </div>
+        <button onclick="openModal('hero')" class="bg-slate-800 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-slate-700 shadow-sm transition-colors flex items-center gap-2">
+            <i class="fa-solid fa-upload"></i> Upload Files
+        </button>
+      </div>
+      ${heroes.length ? `<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">${cards}</div>` : `<div class="empty-state"><i class="fa-regular fa-image text-4xl mb-3"></i><p class="font-medium" contenteditable="true">No hero references yet</p><p class="text-sm" contenteditable="true">Upload approved hero images to lock QC standards per style.</p></div>`}
+    </div>
+  `;
+}
+
+function renderValidator(container) {
+  container.innerHTML = `
+    <div class="p-6 max-w-3xl mx-auto">
+      <div class="text-center mb-8">
+        <div class="inline-flex items-center justify-center h-16 w-16 rounded-full bg-red-50 text-brand-red mb-4"><i class="fa-solid fa-spell-check text-2xl"></i></div>
+        <h2 class="text-2xl font-bold text-slate-800" contenteditable="true" spellcheck="false">Naming convention validator</h2>
+        <p class="text-sm text-slate-500 mt-2" contenteditable="true" spellcheck="false">Validates strict PDP format: StyleNumber_ColorCode_ViewNumber.jpg (view 01 through 07).</p>
+      </div>
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-6 mb-6">
+        <label class="block text-sm font-semibold text-slate-700 mb-2" contenteditable="true">Paste filenames to validate (one per line)</label>
+        <textarea id="val-input" rows="6" class="w-full border border-slate-300 rounded-lg p-3 text-sm focus:ring-2 focus:ring-brand-red outline-none font-mono" placeholder="S001_BLK_01.jpg"></textarea>
+        <div class="mt-4 flex justify-between items-center">
+          <div class="text-xs text-slate-500" contenteditable="true"><strong>Rule:</strong> StyleNumber (alphanumeric), ColorCode (letters), ViewNumber (01 to 07)</div>
+          <button onclick="runValidation()" class="bg-slate-800 text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-slate-900 shadow-sm transition-colors">Validate files</button>
+        </div>
+      </div>
+      <div id="val-results" class="hidden bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+        <h3 class="font-bold text-slate-800 mb-4" contenteditable="true">Validation results</h3>
+        <ul id="val-list" class="space-y-2"></ul>
+      </div>
+    </div>
+  `;
+}
+
+function renderDashboard(container) {
+  const total = orders.length;
+  const revs = orders.filter(o => o.revs > 0).length;
+  const revRate = total ? Math.round((revs / total) * 100) : 0;
+  const overdue = orders.filter(o => isOverdue(o.eta, o.actualDelivery, o.status)).length;
+  const delivered = orders.filter(o => o.status === 'Delivered').length;
+
+  container.innerHTML = `
+    <div class="p-6">
+      <h2 class="text-2xl font-bold text-slate-800 mb-6" contenteditable="true" spellcheck="false">Ops dashboard</h2>
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+        <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5 border-l-4 border-blue-500"><p class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1" contenteditable="true">Total active orders</p><p class="text-3xl font-black text-slate-800">${total}</p></div>
+        <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5 border-l-4 border-orange-500"><p class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1" contenteditable="true">Revision rate</p><p class="text-3xl font-black text-slate-800">${revRate}%</p></div>
+        <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5 border-l-4 border-brand-red"><p class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1" contenteditable="true">Overdue deliveries</p><p class="text-3xl font-black text-slate-800">${overdue}</p></div>
+        <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5 border-l-4 border-green-500"><p class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1" contenteditable="true">Delivered</p><p class="text-3xl font-black text-slate-800">${delivered}</p></div>
+      </div>
+      ${total === 0 ? `<div class="empty-state"><i class="fa-solid fa-chart-simple text-4xl mb-3"></i><p class="font-medium" contenteditable="true">No data yet</p><p class="text-sm" contenteditable="true">Metrics populate once orders are added.</p></div>` : ''}
+    </div>
+  `;
+}
+
+function renderComms(container) {
+  const rows = comms.map((c, i) => `
+    <tr class="border-b border-slate-100 hover:bg-slate-50 transition-colors">
+      <td class="p-4 text-sm text-slate-600 whitespace-nowrap">${c.date}</td>
+      <td class="p-4 font-medium text-slate-800">${c.contact}</td>
+      <td class="p-4 text-sm text-slate-700">${c.topic}</td>
+      <td class="p-4 text-sm text-slate-600">${c.resolution}</td>
+      <td class="p-4 text-center">${c.followUp === 'Y' ? '<span class="px-2 py-1 bg-red-100 text-red-700 rounded text-xs font-bold">YES</span>' : '<span class="text-slate-400 text-xs">No</span>'}</td>
+      <td class="p-4 whitespace-nowrap">
+        <button onclick="openModal('comm', ${i})" class="text-slate-400 hover:text-blue-600 p-1 transition-colors"><i class="fa-solid fa-pen"></i></button>
+        <button onclick="deleteItem('comm', ${i})" class="text-slate-400 hover:text-red-600 p-1 transition-colors"><i class="fa-solid fa-trash"></i></button>
+      </td>
+    </tr>
+  `).join('');
+
+  container.innerHTML = `
+    <div class="p-6">
+      <div class="flex justify-between items-center mb-6">
+        <div>
+          <h2 class="text-2xl font-bold text-slate-800" contenteditable="true" spellcheck="false">Client communication log</h2>
+          <p class="text-sm text-slate-500 mt-1" contenteditable="true" spellcheck="false">Track external discussions to prevent communication gaps.</p>
+        </div>
+        <button onclick="openModal('comm')" class="bg-slate-800 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-slate-700 shadow-sm transition-colors"><i class="fa-solid fa-plus mr-2"></i>Log entry</button>
+      </div>
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+        <div class="overflow-x-auto table-container">
+          <table class="w-full text-left border-collapse">
+            <thead><tr class="bg-slate-50 border-b border-slate-200 text-xs uppercase text-slate-500 font-semibold tracking-wider"><th class="p-4" contenteditable="true">Date</th><th class="p-4" contenteditable="true">Contact person</th><th class="p-4" contenteditable="true">Topic</th><th class="p-4" contenteditable="true">Resolution</th><th class="p-4 text-center" contenteditable="true">Follow up needed?</th><th class="p-4">Actions</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+        ${comms.length === 0 ? `<div class="empty-state"><i class="fa-regular fa-comments text-4xl mb-3"></i><p class="font-medium" contenteditable="true">No entries yet</p><p class="text-sm" contenteditable="true">Log client conversations here to avoid repeated back and forth.</p></div>` : ''}
+      </div>
+    </div>
+  `;
+}
+
+// ----------------------------------------------------
+// UTILITIES
+// ----------------------------------------------------
+
+function getStatusBadge(status) {
+  const map = {
+    'Pending': 'bg-slate-100 text-slate-600 border-slate-200',
+    'In Progress': 'bg-blue-50 text-blue-700 border-blue-200',
+    'QC Review': 'bg-yellow-50 text-yellow-700 border-yellow-200',
+    'Revision Needed': 'bg-orange-50 text-orange-700 border-orange-200',
+    'Approved': 'bg-lime-50 text-lime-700 border-lime-200',
+    'Delivered': 'bg-emerald-50 text-emerald-700 border-emerald-200',
+    'Marilena Review': 'bg-purple-50 text-purple-700 border-purple-200'
+  };
+  const classes = map[status] || map['Pending'];
+  return `<span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold border ${classes}">${status}</span>`;
+}
+
+function getFlagBadge(flags) {
+  if (!flags || flags === 'None' || flags.length === 0 || (Array.isArray(flags) && flags.includes('None'))) {
+    return '<span class="text-slate-400 text-xs">-</span>';
+  }
+  
+  const flagArray = Array.isArray(flags) ? flags : [flags];
+  const colors = {
+    'Under Retouched': 'bg-rose-100 text-rose-700', 'Over Retouched': 'bg-pink-100 text-pink-700',
+    'Hero Mismatch': 'bg-amber-100 text-amber-700', 'Wrong Crop': 'bg-cyan-100 text-cyan-700',
+    'Naming Error': 'bg-red-100 text-red-700', 'Other': 'bg-slate-200 text-slate-700'
+  };
+  
+  return flagArray.map(flag => {
+      const c = colors[flag] || colors['Other'];
+      return `<span class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium leading-tight ${c} mb-1">${flag}</span>`;
+  }).join('');
+}
+
+function isOverdue(etaDate, actualDate, status) {
+  if (status === 'Approved' || status === 'Delivered' || !etaDate || actualDate) return false;
+  return new Date(etaDate) < new Date();
+}
+
+window.runValidation = function() {
+  const input = document.getElementById('val-input').value;
+  const lines = input.split('\n').filter(l => l.trim() !== '');
+  const resContainer = document.getElementById('val-results');
+  const list = document.getElementById('val-list');
+  if (lines.length === 0) return;
+  const pattern = /^([A-Za-z0-9]+)_([A-Za-z]+)_(\d{2})\.(jpg|jpeg|png|tif|tiff)$/i;
+  list.innerHTML = '';
+  lines.forEach(line => {
+    const trimmed = line.trim();
+    const match = trimmed.match(pattern);
+    let isValid = false;
+    let reason = 'Does not match StyleNumber_ColorCode_ViewNumber.ext format';
+    if (match) {
+      const viewNum = match[3];
+      if (viewNum >= '01' && viewNum <= '07') { isValid = true; }
+      else { reason = `View number ${viewNum} is out of range, expected 01 to 07`; }
+    }
+    const li = document.createElement('li');
+    li.className = 'flex items-center justify-between p-3 rounded-lg border ' + (isValid ? 'bg-green-50 border-green-100' : 'bg-red-50 border-red-100');
+    li.innerHTML = `<span class="font-mono text-sm text-slate-700">${trimmed}</span>${isValid ? '<span class="text-green-600 text-sm font-bold"><i class="fa-solid fa-check mr-1"></i> Valid</span>' : `<span class="text-red-600 text-sm font-bold" title="${reason}"><i class="fa-solid fa-xmark mr-1"></i> ${reason}</span>`}`;
+    list.appendChild(li);
+  });
+  resContainer.classList.remove('hidden');
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  loadData().then(loadEditables);
+});
+</script>
+</body>
+</html>

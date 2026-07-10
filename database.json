@@ -1,0 +1,55 @@
+{
+  "orders": [
+    {
+      "id": "ORD-1001",
+      "client": "C5 Apparel",
+      "status": "Pending",
+      "retoucher": "Alex M.",
+      "qc": "Sam T.",
+      "flag": [
+        "None"
+      ],
+      "notes": "",
+      "revs": 0,
+      "eta": "2026-07-20",
+      "actualDelivery": "",
+      "owner": "Mike",
+      "qcReviewer": "Sam T."
+    },
+    {
+      "id": "ORD-1002",
+      "client": "C5 Apparel",
+      "status": "Revision Needed",
+      "retoucher": "John D.",
+      "qc": "Sam T.",
+      "flag": [
+        "Over Retouched",
+        "Naming Error"
+      ],
+      "notes": "Fix texture & filename",
+      "revs": 2,
+      "eta": "2026-07-10",
+      "actualDelivery": "",
+      "owner": "Sarah",
+      "qcReviewer": "Sam T."
+    }
+  ],
+  "heroes": [
+    {
+      "style": "C914SS045_BLK",
+      "img": "https://placehold.co/400x300/e2e8f0/64748b?text=Sample+Hero",
+      "date": "2026-06-15",
+      "notes": "High contrast, clean white bg, natural skin texture.",
+      "approvedBy": "Marilena"
+    }
+  ],
+  "comms": [
+    {
+      "date": "2026-07-10",
+      "contact": "Client Team",
+      "topic": "Lighting Standards",
+      "resolution": "Updated to slightly warmer tones.",
+      "followUp": "N"
+    }
+  ]
+}
